@@ -1,5 +1,5 @@
 SECTION "wram", WRAMX, BANK[$1], ALIGN[8]
-wMessageBlock: ds 8 ;  must be aligned
+wM: ds 8 ;  must be aligned
 ds 8
 wK: ds 8
 ds 8
@@ -14,6 +14,18 @@ wCDn: ds 4*16*2
 SECTION "wKn", WRAMX, BANK[$1], ALIGN[8]
 wKn: ds 8*16
 
+wMIP: ds 8
+
+ds 8
+
+wL0: ds 4
+wR0: ds 4
+wLRn: ds 2*4*16
+
+wRtmp: ds 6
+ds 2
+wER: ds 8
+
 ; aux variables
 
 wCurBitMask: ds 1
@@ -22,6 +34,8 @@ wCDnPtrLow: ds 1
 wKnPtrLow:
     ds 1
 wKnCounter: ds 1
+wMIPPtrLow: ds 1
+wCurPtrLow: ds 1
 
 SECTION "Bit Lookup Table", ROMX, ALIGN[8]
 BitLookupTable: ; must be aligned
@@ -49,7 +63,6 @@ PC1Table:
     db 21, 13, 05, 28, 20, 12, 04,  65
 PC1TableEnd
 
-SECTION "PC2 Table", ROMX, ALIGN[8]
 PC2Table:
 ; 0s are for byte alignment (hard zeroes)
     db 14, 17, 11, 24,  1,  5,   0, 0
@@ -62,6 +75,29 @@ PC2Table:
     db 46, 42, 50, 36, 29, 32,   0, 0
 PC2TableEnd
 
+SECTION "IP Table", ROMX, ALIGN[8]
+IPTable:
+    db 58, 50, 42, 34, 26, 18, 10,  2
+    db 60, 52, 44, 36, 28, 20, 12,  4
+    db 62, 54, 46, 38, 30, 22, 14,  6
+    db 64, 56, 48, 40, 32, 24, 16,  8
+    db 57, 49, 41, 33, 25, 17,  9,  1
+    db 59, 51, 43, 35, 27, 19, 11,  3
+    db 61, 53, 45, 37, 29, 21, 13,  5
+    db 63, 55, 47, 39, 31, 23, 15,  7
+IPTableEnd
+
+ETable:
+    db 32, 1,   2,  3,  4,  5,  0,0
+    db 4,  5,   6,  7,  8,  9,  0,0
+    db 8,  9,  10, 11, 12, 13,  0,0
+    db 12, 13, 14, 15, 16, 17,  0,0
+    db 16, 17, 18, 19, 20, 21,  0,0
+    db 20, 21, 22, 23, 24, 25,  0,0
+    db 24, 25, 26, 27, 28, 29,  0,0
+    db 28, 29, 30, 31, 32,  1,  0,0
+ETableEnd
+
 SECTION "DES Code", ROMX
 
 TestMessage:
@@ -73,6 +109,8 @@ DefaultKey:
 GetBit:
 ; reads ath bit in [hl]
 ; hl needs not cross a xx00 boundary
+    cp -1
+    ret z
     ld b, a
     sra a
     sra a
@@ -198,27 +236,31 @@ Do16Rotations:
     rotateiteration 1
     ret
 
-GenKPlus:
+genroutine: MACRO
     ld a, %10000000
     ld [wCurBitMask], a
     
-    ld de, PC1Table
-    ld a, LOW(wKPlus)
-    ld [wKPlusPtrLow], a
+    ld de, \1
+    ld a, LOW(\3)
+    ld [wCurPtrLow], a
 .loop
     ld a, [de]
     dec a ; fdsjklfdsjfklds
-    ld hl, wK
+    ld hl, \2
     call GetBit
-    ld h, HIGH(wKPlus)
-    lda l, [wKPlusPtrLow]
+    ld h, HIGH(\3)
+    lda l, [wCurPtrLow]
     call WriteBit
-    lda [wKPlusPtrLow], l
+    lda [wCurPtrLow], l
     inc de
     ld a, e
-    cp LOW(PC1TableEnd)
+    cp LOW(\1End)
     jr nz, .loop
     ret
+ENDM
+
+GenKPlus:
+    genroutine PC1Table, wK, wKPlus
 
 GenKn:
     lda [wCurBitMask], %10000000
@@ -241,6 +283,12 @@ GenKn:
     jr nz, .loop
     ret
 
+GenMIP:
+    genroutine IPTable, wM, wMIP
+
+GenERn:
+    genroutine ETable, wRtmp, wER
+
 GenAllKn:
     
     lda [wCDnPtrLow], LOW(wCDn)
@@ -258,10 +306,21 @@ GenAllKn:
     jr nz, .knloop
     ret
 
+XorData:
+.loop
+    ld a, [de]
+    xor [hl]
+    ld [de], a
+    inc hl
+    inc de
+    dec b
+    jr nz, .loop
+    ret
+
 DoDES:
     ld bc, 8
     ld hl, TestMessage
-    ld de, wMessageBlock
+    ld de, wM
     call CopyData
     
     ld bc, 8
@@ -301,14 +360,42 @@ DoDES:
     ; D1: AA 66 3C 3C
     ; D16: 54 B2 9E 1E
     ; 
-    ld b, b
     
     call GenAllKn
     
     ; K1-K16 seem right!
+    ; K16 might be C8 C D8 2C 0C 84 7C d4
     
     ; ===
     ; Step 2: Encode each 64-bit block of data.
-    ; ===
+    
+    ld b, b
+    
+    call GenMIP
+    
+    ; MIP is CC 00 CC FF F0 AA F0 AA
+    
+    ld hl, wMIP
+    ld de, wL0
+    ld bc, 8
+    call CopyData
+    
+    ld hl, wR0
+    ld de, wLRn
+    ld bc, 4
+    call CopyData
+    
+    ld hl, wR0
+    ld de, wRtmp
+    ld bc, 4
+    call CopyData
+    
+    call GenERn
+    ld de, wER
+    ld hl, wKn ; TODO Kn for reals
+    ld b, 8
+    call XorData
     
     ret
+
+
