@@ -1,5 +1,6 @@
-SECTION "wram", WRAMX, BANK[$1], ALIGN[8]
+SECTION "wM", WRAMX, BANK[$1], ALIGN[8]
 wM: ds 8 ;  must be aligned
+wMEnd
 ds 8
 wK: ds 8
 ds 8
@@ -11,6 +12,7 @@ wC0: ds 4
 wD0: ds 4
 wCDn: ds 4*16*2
 
+wMSectionEnd
 SECTION "wKn", WRAMX, BANK[$1], ALIGN[8]
 wKn: ds 8*16
 
@@ -25,6 +27,7 @@ wER: ds 8
 wSB: ds 4
 wF: ds 4
 
+wKnSectionEnd
 SECTION "wRL", WRAMX, BANK[$1], ALIGN[8]
 wL0: ds 4
 wR0: ds 4
@@ -45,6 +48,7 @@ wMIPPtrLow: ds 1
 wCurPtrLow: ds 1
 wCurBlock: ds 1
 
+wRLSectionEnd
 SECTION "Bit Lookup Table", ROMX, ALIGN[8]
 BitLookupTable: ; must be aligned
     
@@ -261,6 +265,29 @@ WriteBit:
     inc hl
     ret
 
+ClearRAM:
+.loop
+    xor a
+    ld [hli], a
+    dec bc
+    ld a, b
+    or c
+    jr nz, .loop
+    ret
+    
+
+ClearDESRAM:
+    ; lol don't clear wM
+    ld hl, wMEnd
+    ld bc, wMSectionEnd-wM
+    call ClearRAM
+    ld hl, wKn
+    ld bc, wKnSectionEnd-wKn
+    call ClearRAM
+    ld hl, wR0
+    ld bc, wRLSectionEnd-wR0
+    jp ClearRAM
+
 RotateBlock:
     push hl
     ld bc, 4+4+3
@@ -413,7 +440,25 @@ XorData:
     jr nz, .loop
     ret
 
+copybyte: MACRO
+    ld a, [hli]
+    ld [de], a
+    inc de
+ENDM
 
+copybytes: MACRO
+rept \1
+    copybyte
+endr
+ENDM
+
+Copy8:
+    copybytes 2
+Copy6:
+    copybytes 2
+Copy4:
+    copybytes 4
+    ret
 
 GetSBoxValue:
 ; destroys b, hl
@@ -469,15 +514,13 @@ CalcLR:
     ld l, a
     push hl
     ld de, wRtmp
-    ld bc, 4
-    call CopyData
+    call Copy4
     pop hl
     ld a, l
     add 4
     ld e, a
     ld d, h
-    ld bc, 4
-    call CopyData
+    call Copy4
     
     call GenERn
     ld de, wER
@@ -506,8 +549,7 @@ CalcLR:
     ld e, l
     ld d, h
     ld hl, wF
-    ld bc, 4
-    call CopyData
+    call Copy4
     pop de
     
     ld a, [wCurBlock]
@@ -523,15 +565,15 @@ CalcLR:
     ret
 
 DoDES:
-    ;ld bc, 8
     ;ld hl, TestMessage
     ;ld de, wM
-    ;call CopyData
+    ;call Copy8
     
-    ld bc, 8
+    call ClearDESRAM
+    
     ld hl, DefaultKey
     ld de, wK
-    call CopyData
+    call Copy8
     
     ; ===
     ; Step 1: Create 16 subkeys, each of which is 48-bits long.
@@ -543,13 +585,11 @@ DoDES:
     
     ld hl, wKPlus
     ld de, wC0
-    ld bc, 4
-    call CopyData
+    call Copy4
     
     ld hl, wKPlus+4
     ld de, wD0
-    ld bc, 4
-    call CopyData
+    call Copy4
     
     ld hl, wC0
     call Do16Rotations
@@ -569,7 +609,7 @@ DoDES:
     call GenAllKn
     
     ; K1-K16 seem right!
-    ; K16 might be C8 C D8 2C 0C 84 7C d4
+    ; K16 might be C8 CC D8 2C 0C 84 7C d4
     
     ; ===
     ; Step 2: Encode each 64-bit block of data.
@@ -581,8 +621,7 @@ DoDES:
     
     ld hl, wMIP
     ld de, wL0
-    ld bc, 8
-    call CopyData
+    call Copy8
     
     ld a, 0
     ld [wCurBlock], a
@@ -598,13 +637,11 @@ DoDES:
     
     ld hl, wLRn + 8 * 15
     ld de, wR16L16+4
-    ld bc, 4
-    call CopyData
+    call Copy4
     
     ld hl, wLRn + 8 * 15 + 4
     ld de, wR16L16
-    ld bc, 4
-    call CopyData
+    call Copy4
     
     call GenIPNeg1
     

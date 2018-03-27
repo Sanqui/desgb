@@ -434,7 +434,7 @@ Start:
     jr .moved
 .right
     ld a, e
-    cp a, 25
+    cp a, NUM_LETTERS+1
     jr z, .nokey
     inc a
     jr .moved
@@ -447,15 +447,25 @@ Start:
     
     ld hl, W_INPUT
     ld a, [H_POSITION]
-    cp a, 8
+    cp NUM_CHARS
     jr z, .nokey
     add l
     ld l, a
     ld a, [H_SELECTION]
+    cp NUM_LETTERS+1
+    jr nz, .notspace
+    ld a, " "
+    jr .gotchar
+.notspace
     add a, $41
+.gotchar
     ld [hli], a
+    ld a, [H_POSITION]
+    cp NUM_CHARS-1
+    jr nc, .nounderscore
     ld a, "_"
     ld [hli], a
+.nounderscore
     ld a, "@"
     ld [hl], a
     
@@ -580,13 +590,7 @@ CompareStrings:
     xor a
     ret
 
-Enter:
-    ld de, W_INPUT
-    ld a, [de]
-    cp "_"
-    jp z, .empty
-    
-    ld hl, W_INPUT
+DoDESWithHL:
     ld b, 8
     ld de, wM
 .copyloop
@@ -607,23 +611,56 @@ Enter:
     dec b
     jr nz, .fillloop
 .donecopy
+    
+    jp DoDES
 
-    ld bc, $0107
-    ld de, $120b
-    call DrawBox
-    
-    call DoDES
-    
+WriteHexWord:
     ld b, 8
-    decoord 9, 2
-    ld hl, wIPNeg1
 .writeloop
     ld a, [hli]
     call WriteHexNumber
     dec b
     jr nz, .writeloop
+    ret
+
+Enter:
+    ld de, W_INPUT
+    ld a, [de]
+    cp "_"
+    jp z, .empty
+    ld a, [H_POSITION]
+    cp 8+1
+    jr nc, .drawlargerbox
+    ld bc, $0107
+    ld de, $120b
+    call DrawBox
+    jr .drewbox
+.drawlargerbox
+    ld bc, $0107
+    ld de, $120c
+    call DrawBox
     
+.drewbox
+    ld hl, W_INPUT
     
+    call DoDESWithHL
+    
+    decoord 9, 2
+    ld hl, wIPNeg1
+    call WriteHexWord
+    
+    ld a, [H_POSITION]
+    cp 9
+    jr c, .done
+    
+    ld hl, W_INPUT+8
+    
+    call DoDESWithHL
+    decoord 10, 2
+    ld hl, wIPNeg1
+    call WriteHexWord
+    
+.done
     jr .loop
 
 .empty

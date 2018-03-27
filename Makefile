@@ -5,7 +5,7 @@ export LC_CTYPE=C
 
 all: des.gb
 
-main.o: main.asm vram.asm des.asm
+main.o: main.asm vram.asm des.asm constants.asm
 	rgbasm -E -h -o $@ $<
 
 des.gb: main.o
