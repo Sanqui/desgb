@@ -18,15 +18,20 @@ wMIP: ds 8
 
 ds 8
 
-wL0: ds 4
-wR0: ds 4
-wLRn: ds 2*4*16
 
 wRtmp: ds 6
 ds 2
 wER: ds 8
 wSB: ds 4
 wF: ds 4
+
+SECTION "wRL", WRAMX, BANK[$1], ALIGN[8]
+wL0: ds 4
+wR0: ds 4
+wLRn: ds 2*4*16
+
+wR16L16: ds 8
+wIPNeg1: ds 8
 
 ; aux variables
 
@@ -38,6 +43,7 @@ wKnPtrLow:
 wKnCounter: ds 1
 wMIPPtrLow: ds 1
 wCurPtrLow: ds 1
+wCurBlock: ds 1
 
 SECTION "Bit Lookup Table", ROMX, ALIGN[8]
 BitLookupTable: ; must be aligned
@@ -162,6 +168,17 @@ PTable:
     db 22, 11,  4, 25
 PTableEnd
 
+IPNeg1Table:
+    db 40, 8, 48, 16, 56, 24, 64, 32
+    db 39, 7, 47, 15, 55, 23, 63, 31
+    db 38, 6, 46, 14, 54, 22, 62, 30
+    db 37, 5, 45, 13, 53, 21, 61, 29
+    db 36, 4, 44, 12, 52, 20, 60, 28
+    db 35, 3, 43, 11, 51, 19, 59, 27
+    db 34, 2, 42, 10, 50, 18, 58, 26
+    db 33, 1, 41,  9, 49, 17, 57, 25
+IPNeg1TableEnd
+
 SECTION "DES Code", ROMX
 
 TestMessage:
@@ -223,8 +240,14 @@ WriteBit:
     ld a, [wCurBitMask]
     or [hl]
     ld [hl], a
+    jr .written
     
 .skipbit
+    ld a, [wCurBitMask]
+    xor $ff
+    and [hl]
+    ld [hl], a
+.written
     ld a, [wCurBitMask]
     rr a
     ld [wCurBitMask], a
@@ -356,6 +379,9 @@ GenERn:
 GenF:
     genroutine PTable, wSB, wF
 
+GenIPNeg1:
+    genroutine IPNeg1Table, wR16L16, wIPNeg1
+
 GenAllKn:
     
     lda [wCDnPtrLow], LOW(wCDn)
@@ -382,6 +408,115 @@ XorData:
     inc de
     dec b
     jr nz, .loop
+    ret
+
+
+
+GetSBoxValue:
+; destroys b, hl
+    ld b, a
+    and %01111000
+    srl a
+    srl a
+    srl a
+    add l
+    ld l, a
+    ld a, b
+    and %00000100
+    sla a
+    sla a
+    add l
+    ld l, a
+    ld a, b
+    and %10000000
+    srl a
+    srl a
+    add l
+    ld l, a
+    ld a, [hl]
+    ret
+
+sboxpair: MACRO
+    ld hl, SBox1Table + (SBox2Table-SBox1Table)*(\1*2)
+    ld a, [wER+(\1*2)]
+    call GetSBoxValue
+    swap a
+    ld c, a
+    ld hl, SBox1Table + (SBox2Table-SBox1Table)*(\1*2+1)
+    ld a, [wER+(\1*2)+1]
+    call GetSBoxValue
+    or c
+    ld [wSB+\1], a
+ENDM
+
+DoSBoxes:
+    sboxpair 0
+    sboxpair 1
+    sboxpair 2
+    sboxpair 3
+    ret
+
+CalcLR:
+    ld hl, wR0
+    ld a, [wCurBlock]
+    sla a
+    sla a
+    sla a
+    add l
+    ld l, a
+    push hl
+    ld de, wRtmp
+    ld bc, 4
+    call CopyData
+    pop hl
+    ld a, l
+    add 4
+    ld e, a
+    ld d, h
+    ld bc, 4
+    call CopyData
+    
+    call GenERn
+    ld de, wER
+    ld hl, wKn
+    ld a, [wCurBlock]
+    sla a
+    sla a
+    sla a
+    add l
+    ld l, a
+    ld b, 8
+    call XorData
+    
+    call DoSBoxes
+    call GenF
+    
+    ld a, [wCurBlock]
+    inc a
+    ld hl, wR0
+    sla a
+    sla a
+    sla a
+    add l
+    ld l, a
+    push hl
+    ld e, l
+    ld d, h
+    ld hl, wF
+    ld bc, 4
+    call CopyData
+    pop de
+    
+    ld a, [wCurBlock]
+    ld hl, wL0
+    sla a
+    sla a
+    sla a
+    add l
+    ld l, a
+    ld b, 4
+    
+    call XorData
     ret
 
 DoDES:
@@ -447,68 +582,29 @@ DoDES:
     ld bc, 8
     call CopyData
     
-    ld hl, wR0
-    ld de, wLRn
+    ld a, 0
+    ld [wCurBlock], a
+    
+.blockloop
+    call CalcLR
+    
+    ld a, [wCurBlock]
+    inc a
+    ld [wCurBlock], a
+    cp 16
+    jr nz, .blockloop
+    
+    ld hl, wLRn + 8 * 15
+    ld de, wR16L16+4
     ld bc, 4
     call CopyData
     
-    ld hl, wR0
-    ld de, wRtmp
+    ld hl, wLRn + 8 * 15 + 4
+    ld de, wR16L16
     ld bc, 4
     call CopyData
     
-    call GenERn
-    ld de, wER
-    ld hl, wKn ; TODO Kn for reals
-    ld b, 8
-    call XorData
+    call GenIPNeg1
     
-    call DoSBoxes
-    call GenF
-    
-    ret
-
-GetSBoxValue:
-; destroys b, hl
-    ld b, a
-    and %01111000
-    srl a
-    srl a
-    srl a
-    add l
-    ld l, a
-    ld a, b
-    and %00000100
-    sla a
-    sla a
-    add l
-    ld l, a
-    ld a, b
-    and %10000000
-    srl a
-    srl a
-    add l
-    ld l, a
-    ld a, [hl]
-    ret
-
-sboxpair: MACRO
-    ld hl, SBox1Table + (SBox2Table-SBox1Table)*(\1*2)
-    ld a, [wER+(\1*2)]
-    call GetSBoxValue
-    swap a
-    ld c, a
-    ld hl, SBox1Table + (SBox2Table-SBox1Table)*(\1*2+1)
-    ld a, [wER+(\1*2)+1]
-    call GetSBoxValue
-    or c
-    ld [wSB+\1], a
-ENDM
-
-DoSBoxes:
-    sboxpair 0
-    sboxpair 1
-    sboxpair 2
-    sboxpair 3
     ret
 
