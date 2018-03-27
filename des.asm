@@ -185,7 +185,10 @@ TestMessage:
     db $01, $23, $45, $67, $89, $ab, $cd, $ef
 
 DefaultKey:
-    db $13, $34, $57, $79, $9B, $BC, $DF, $F1
+    db "GAME BOY"
+;    db $13, $34, $57, $79, $9B, $BC, $DF, $F1
+    
+; 133457799BBCDFF1
 
 GetBit:
 ; reads ath bit in [hl]
@@ -520,10 +523,10 @@ CalcLR:
     ret
 
 DoDES:
-    ld bc, 8
-    ld hl, TestMessage
-    ld de, wM
-    call CopyData
+    ;ld bc, 8
+    ;ld hl, TestMessage
+    ;ld de, wM
+    ;call CopyData
     
     ld bc, 8
     ld hl, DefaultKey
@@ -571,7 +574,6 @@ DoDES:
     ; ===
     ; Step 2: Encode each 64-bit block of data.
     
-    ld b, b
     
     call GenMIP
     

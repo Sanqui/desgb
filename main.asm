@@ -372,8 +372,6 @@ Start:
     ld [$FF24], a
     
 .begin
-    call DoDES
-    jr @
     ld hl, W_INPUT
     ld a, "_"
     ld [hli], a
@@ -449,7 +447,7 @@ Start:
     
     ld hl, W_INPUT
     ld a, [H_POSITION]
-    cp a, 13
+    cp a, 8
     jr z, .nokey
     add l
     ld l, a
@@ -483,7 +481,7 @@ Start:
     jr .nokey
 
 .start
-    call CheckPwd
+    call Enter
     jp .begin
 
 .nokey
@@ -582,11 +580,49 @@ CompareStrings:
     xor a
     ret
 
-CheckPwd:
+Enter:
     ld de, W_INPUT
     ld a, [de]
     cp "_"
     jp z, .empty
+    
+    ld hl, W_INPUT
+    ld b, 8
+    ld de, wM
+.copyloop
+    ld a, [hli]
+    cp "_"
+    jr z, .fillloop
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .copyloop
+.fillloop
+    ld a, b
+    and a
+    jr z, .donecopy
+    xor a
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .fillloop
+.donecopy
+
+    ld bc, $0107
+    ld de, $120b
+    call DrawBox
+    
+    call DoDES
+    
+    ld b, 8
+    decoord 9, 2
+    ld hl, wIPNeg1
+.writeloop
+    ld a, [hli]
+    call WriteHexNumber
+    dec b
+    jr nz, .writeloop
+    
     
     jr .loop
 
