@@ -623,7 +623,7 @@ Letters:
     
 
 Tiles:
-    INCBIN "tiles.gb"
+    INCBIN "gfx/tiles.2bpp"
 TilesEnd
 
 INCLUDE "des.asm"

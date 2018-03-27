@@ -6,7 +6,7 @@ export LC_CTYPE=C
 all: des.gb
 
 main.o: main.asm vram.asm des.asm
-	rgbasm -h -o $@ $<
+	rgbasm -E -h -o $@ $<
 
 des.gb: main.o
 	rgblink -n des.sym -o $@ $<

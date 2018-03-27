@@ -1,4 +1,4 @@
-SECTION "wram", WRAMX[$d000], BANK[$1]
+SECTION "wram", WRAMX, BANK[$1], ALIGN[8]
 wMessageBlock: ds 8 ;  must be aligned
 ds 8
 wK: ds 8
@@ -8,13 +8,20 @@ wKPlus: ds 6
 wZero:  ds 1
 ds 1 + 8
 wC0: ds 4
-WCn: ds 4*16
-ds 4+8
 wD0: ds 4
-wDn: ds 4*16
+wCDn: ds 4*16*2
+
+SECTION "wKn", WRAMX, BANK[$1], ALIGN[8]
+wKn: ds 8*16
+
+; aux variables
 
 wCurBitMask: ds 1
 wKPlusPtrLow: ds 1
+wCDnPtrLow: ds 1
+wKnPtrLow:
+    ds 1
+wKnCounter: ds 1
 
 SECTION "Bit Lookup Table", ROMX, ALIGN[8]
 BitLookupTable: ; must be aligned
@@ -41,6 +48,19 @@ PC1Table:
     db 14, 06, 61, 53, 45, 37, 29,  65
     db 21, 13, 05, 28, 20, 12, 04,  65
 PC1TableEnd
+
+SECTION "PC2 Table", ROMX, ALIGN[8]
+PC2Table:
+; 0s are for byte alignment (hard zeroes)
+    db 14, 17, 11, 24,  1,  5,   0, 0
+    db 3,  28, 15,  6, 21, 10,   0, 0
+    db 23, 19, 12,  4, 26,  8,   0, 0
+    db 16,  7, 27, 20, 13,  2,   0, 0
+    db 41, 52, 31, 37, 47, 55,   0, 0
+    db 30, 40, 51, 45, 33, 48,   0, 0
+    db 44, 49, 39, 56, 34, 53,   0, 0
+    db 46, 42, 50, 36, 29, 32,   0, 0
+PC2TableEnd
 
 SECTION "DES Code", ROMX
 
@@ -69,6 +89,32 @@ GetBit:
     and [hl]
     ret
 
+GetBit7:
+; reads ath bit in [hl], skipping over every 7th bit
+; hl needs not cross a xx00 boundary
+    cp -1
+    ret z
+    ld c, 0
+.divloop
+    sub 7
+    inc c
+    jr nc, .divloop
+    dec c
+    add 7
+    ld b, a
+    ld a, c
+    
+    add l
+    ld l, a
+    ld a, b
+    
+    ld b, HIGH(BitLookupTable)
+    ld c, a
+    ld a, [bc]
+    
+    and [hl]
+    ret
+
 WriteBit:
 ; takes z flag
     jr z, .skipbit
@@ -88,17 +134,17 @@ WriteBit:
     ret
 
 RotateBlock:
+    push hl
+    ld bc, 4+4+3
+    add hl, bc
+    ld e, l
+    ld d, h
+    pop hl
     ld a, [hl]
     rlc a
     inc hl
     inc hl
     inc hl
-    ld e, l
-    ld d, h
-    inc de
-    inc de
-    inc de
-    inc de
 rept 4
     ld a, [hld]
     adc 0
@@ -126,7 +172,7 @@ endr
 
 rotateiteration: MACRO
     call RotateBlock
-    ld bc, 4
+    ld bc, 8
     add hl, bc
 rept \1-1
     call RotateBlockInPlace
@@ -152,21 +198,7 @@ Do16Rotations:
     rotateiteration 1
     ret
 
-DoDES:
-    ld bc, 8
-    ld hl, TestMessage
-    ld de, wMessageBlock
-    call CopyData
-    
-    ld bc, 8
-    ld hl, DefaultKey
-    ld de, wK
-    call CopyData
-    
-    ; ===
-    ; Step 1: Create 16 subkeys, each of which is 48-bits long.
-    ; ===
-    
+GenKPlus:
     ld a, %10000000
     ld [wCurBitMask], a
     
@@ -186,9 +218,64 @@ DoDES:
     ld a, e
     cp LOW(PC1TableEnd)
     jr nz, .loop
+    ret
+
+GenKn:
+    lda [wCurBitMask], %10000000
+    ld de, PC2Table
+.loop
+    ld a, [de]
+    dec a ; fdsjklfdsjfklds 2.0
+    ld b, a
+    ld h, HIGH(wCDn)
+    lda l, [wCDnPtrLow]
+    ld a, b
+    call GetBit7
+    ld h, HIGH(wKn)
+    lda l, [wKnPtrLow]
+    call WriteBit
+    lda [wKnPtrLow], l
+    inc de
+    ld a, e
+    cp LOW(PC2TableEnd)
+    jr nz, .loop
+    ret
+
+GenAllKn:
+    
+    lda [wCDnPtrLow], LOW(wCDn)
+    lda [wKnPtrLow], LOW(wKn)
+    ld a, 16
+.knloop
+    ld [wKnCounter], a
+    call GenKn
+    
+    ld a, [wCDnPtrLow]
+    add 8
+    ld [wCDnPtrLow], a
+    ld a, [wKnCounter]
+    dec a
+    jr nz, .knloop
+    ret
+
+DoDES:
+    ld bc, 8
+    ld hl, TestMessage
+    ld de, wMessageBlock
+    call CopyData
+    
+    ld bc, 8
+    ld hl, DefaultKey
+    ld de, wK
+    call CopyData
+    
+    ; ===
+    ; Step 1: Create 16 subkeys, each of which is 48-bits long.
+    ; ===
+    
+    call GenKPlus
     
     ; wKPlus == f0 66 2a 5e 54 b2 9e 1e
-    ld b, b
     
     ld hl, wKPlus
     ld de, wC0
@@ -208,41 +295,20 @@ DoDES:
 
     ; C0: F0 66 2A 5E
     ; C1: E0 CC 54 BE
-    ; C2: C2 98 AA 7E
-    ; C3: 0C 64 AA FE
-    ; C4: 32 94 AE F8
-    ; C5: CC 54 BE E0
-    ; C6: 32 54 FE 86
-    ; C7: CA 56 FC 18
-    ; C8: 2A 5E F0 66
-    ; C9: 54 BE E0 CC
-    ; C10: 54 FE 86 32
-    ; C11: 56 FC 18 CA
-    ; C12: 5E F0 66 2A
-    ; C13: 7E C2 98 AA
-    ; C14: FE 0C 64 AA
-    ; C15: F8 32 94 AE
     ; C16: F0 66 2A 5E
     ; 
     ; D0: 54 B2 9E 1E
     ; D1: AA 66 3C 3C
-    ; D2: 54 CC 78 7A
-    ; D3: 56 32 E2 EA
-    ; D4: 58 CE 8E AA
-    ; D5: 66 3C 3C AA
-    ; D6: 98 F0 F4 AA
-    ; D7: 66 C6 D4 AC
-    ; D8: 9E 1E 54 B2
-    ; D9: 3C 3C AA 66
-    ; D10: F0 F4 AA 98
-    ; D11: C6 D4 AC 66
-    ; D12: 1E 54 B2 9E
-    ; D13: 7A 54 CC 78
-    ; D14: EA 56 32 E2
-    ; D15: AA 58 CE 8E
     ; D16: 54 B2 9E 1E
     ; 
+    ld b, b
     
+    call GenAllKn
     
+    ; K1-K16 seem right!
+    
+    ; ===
+    ; Step 2: Encode each 64-bit block of data.
+    ; ===
     
     ret
